@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-// myTimer (v10)
-// A flexible Pomodoro-style timer with an optional final break.
+// myTimer (v12)
+// Adds an Apple Music catalog search feature.
 
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
@@ -33,7 +33,12 @@ const argv = yargs(hideBin(process.argv))
   .option('last-break', {
     describe: 'Include the final break period after the last work interval',
     type: 'boolean',
-    default: false // The last break is now skipped by default
+    default: false
+  })
+  .option('search', {
+    describe: 'If a local playlist is not found, search the Apple Music catalog',
+    type: 'boolean',
+    default: false
   })
   .help()
   .alias('help', 'h')
@@ -52,7 +57,7 @@ const CYCLE_DURATION_MS = WORK_INTERVAL_MS + BREAK_INTERVAL_MS;
 let originalVolume = 50;
 let operatingMode = 'system';
 
-// --- System & App Control Functions (No changes here) ---
+// --- System & App Control Functions ---
 
 function executeAppleScript(script) {
   const command = `osascript -e '${script}'`;
@@ -61,19 +66,41 @@ function executeAppleScript(script) {
   });
 }
 
+async function playlistExists(name) {
+    const sanitizedName = name.replace(/'/g, "'\\''");
+    const script = `tell application "Music" to exists (playlist named "${sanitizedName}")`;
+    try {
+        const { stdout } = await execPromise(`osascript -e '${script}'`);
+        return stdout.trim() === 'true';
+    } catch (error) {
+        console.error(`Error checking for playlist: ${error.message}`);
+        return false;
+    }
+}
+
+function searchAndPlayMusic(searchTerm) {
+    logStatus(`Searching Apple Music catalog for "${searchTerm}"...`);
+    const encodedTerm = encodeURIComponent(searchTerm);
+    const searchUrl = `music://music.apple.com/search?term=${encodedTerm}`;
+    exec(`open "${searchUrl}"`, (error) => {
+        if (error) console.error(`Error opening search URL: ${error.message}`);
+    });
+}
+
+// ... (All other control functions like playPlaylist, pauseMusic, etc., are unchanged) ...
 async function playCompletionSound() {
     logStatus('Playing completion sound...');
     const soundPath = '/System/Library/Sounds/Hero.aiff';
     const sleep = ms => new Promise(res => setTimeout(res, ms));
     for (let i = 0; i < 5; i++) {
         exec(`afplay ${soundPath}`);
-        await sleep(200);
+        await sleep(350);
     }
 }
-
 function playPlaylist(name) {
-  logStatus(`Starting Apple Music playlist: "${name}"`);
-  executeAppleScript(`tell application "Music" to play playlist "${name}"`);
+  const sanitizedName = name.replace(/'/g, "'\\''");
+  logStatus(`Starting Apple Music playlist: "${sanitizedName}"`);
+  executeAppleScript(`tell application "Music" to play playlist "${sanitizedName}"`);
 }
 function pauseMusic() {
   logStatus(`Pausing Apple Music. 🤫`);
@@ -117,10 +144,6 @@ function logStatus(message) {
     const timestamp = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     console.log(`[${timestamp}] ${message}`);
 }
-
-/**
- * The final actions to run when the entire session is complete.
- */
 async function runFinalActions() {
     logStatus('All cycles complete. Finishing program. Great work!');
     if (operatingMode === 'music') {
@@ -130,11 +153,6 @@ async function runFinalActions() {
     }
     await playCompletionSound();
 }
-
-/**
- * Runs a single focus cycle.
- * @param {number} currentCycle - The current cycle number.
- */
 function runCycle(currentCycle) {
   if (operatingMode === 'music') {
     resumeMusic();
@@ -142,18 +160,12 @@ function runCycle(currentCycle) {
     restoreSystemVolume();
   }
   logStatus(`Starting ${WORK_MINUTES}-minute work interval ${currentCycle} of ${TOTAL_CYCLES}.`);
-
-  // After the work interval, decide whether to start a break or end the program.
   setTimeout(() => {
     const isLastCycle = currentCycle === TOTAL_CYCLES;
-
-    // If it's the last cycle AND the user wants to skip the final break
     if (isLastCycle && !argv.lastBreak) {
         runFinalActions();
-        return; // Stop here, don't schedule another break
+        return;
     }
-
-    // Otherwise, proceed with the break as normal
     logStatus(`Starting ${BREAK_MINUTES}-minute break ${currentCycle} of ${TOTAL_CYCLES}.`);
     if (operatingMode === 'music') {
       pauseMusic();
@@ -178,7 +190,18 @@ async function main() {
     logStatus(`Original volume detected: ${originalVolume}.`);
   } else if (playlistName) {
     operatingMode = 'music';
-    playPlaylist(playlistName);
+    const exists = await playlistExists(playlistName);
+    if (exists) {
+        playPlaylist(playlistName);
+    } else if (argv.search) {
+        // If local playlist not found AND --search flag is used
+        searchAndPlayMusic(playlistName);
+    } else {
+        // If not found and no --search flag, exit gracefully
+        console.error(`\n❌ Error: Playlist "${playlistName}" not found in your local library.`);
+        console.error(`To search the Apple Music catalog instead, add the --search flag.\n`);
+        process.exit(1);
+    }
   } else {
     operatingMode = 'system';
     logStatus('Running in System Mute mode.');
@@ -191,7 +214,6 @@ async function main() {
       setTimeout(() => runCycle(i + 1), i * CYCLE_DURATION_MS);
   }
 
-  // --- Schedule the final action ONLY IF the last break is included ---
   if (argv.lastBreak) {
     const totalProgramDuration = TOTAL_CYCLES * CYCLE_DURATION_MS;
     setTimeout(runFinalActions, totalProgramDuration);
