@@ -1,0 +1,169 @@
+#!/usr/bin/env node
+
+// myTimer (v7)
+// A flexible Pomodoro-style timer with command-line options.
+
+const yargs = require('yargs/yargs');
+const { hideBin } = require('yargs/helpers');
+const util = require('util');
+const { exec } = require('child_process');
+const execPromise = util.promisify(exec);
+
+// --- Command-Line Argument Parsing ---
+const argv = yargs(hideBin(process.argv))
+  .option('i', { // <--- This is the only line that changed
+    alias: 'interval',
+    describe: 'Number of work/break intervals',
+    type: 'number',
+    default: 4,
+    choices: [1, 2, 3, 4]
+  })
+  .option('w', {
+    alias: 'work',
+    describe: 'Duration of work intervals in minutes',
+    type: 'number',
+    default: 25
+  })
+  .option('b', {
+    alias: 'break',
+    describe: 'Duration of break intervals in minutes',
+    type: 'number',
+    default: 5
+  })
+  .help()
+  .alias('help', 'h')
+  .argv;
+
+// --- Use Parsed Arguments as Configuration ---
+const WORK_MINUTES = argv.work;
+const BREAK_MINUTES = argv.break;
+const TOTAL_CYCLES = argv.interval;
+// ---------------------------------------------
+
+const WORK_INTERVAL_MS = WORK_MINUTES * 60 * 1000;
+const BREAK_INTERVAL_MS = BREAK_MINUTES * 60 * 1000;
+const CYCLE_DURATION_MS = WORK_INTERVAL_MS + BREAK_INTERVAL_MS;
+
+let originalVolume = 50;
+let operatingMode = 'system'; // 'system', 'music'
+
+// ... (The rest of the script is exactly the same as before) ...
+
+// --- System & App Control Functions ---
+
+function executeAppleScript(script) {
+  const command = `osascript -e '${script}'`;
+  exec(command, (error) => {
+    if (error) console.error(`AppleScript Error: ${error.message}`);
+  });
+}
+
+function playPlaylist(name) {
+  logStatus(`Starting Apple Music playlist: "${name}"`);
+  executeAppleScript(`tell application "Music" to play playlist "${name}"`);
+}
+
+function pauseMusic() {
+  logStatus(`Pausing Apple Music. 🤫`);
+  executeAppleScript(`tell application "Music" to pause`);
+}
+
+function resumeMusic() {
+  logStatus(`Resuming Apple Music. 🔊`);
+  executeAppleScript(`tell application "Music" to play`);
+}
+
+function muteSystem() {
+  logStatus(`Muting system audio. 🤫`);
+  setVolume(0);
+}
+
+function restoreSystemVolume() {
+  logStatus(`Restoring system volume to ${originalVolume}. 🔊`);
+  setVolume(originalVolume);
+}
+
+function playYouTubeVideo(url) {
+  logStatus(`Opening YouTube video in your browser...`);
+  exec(`open "${url}"`, (error) => {
+    if (error) console.error(`Error opening URL: ${error.message}`);
+  });
+}
+
+async function getVolume() {
+  try {
+    const { stdout } = await execPromise(`osascript -e 'output volume of (get volume settings)'`);
+    return parseInt(stdout.trim(), 10);
+  } catch (err) { return 50; }
+}
+
+function setVolume(level) {
+  executeAppleScript(`set volume output volume ${level}`);
+}
+
+// --- Timer & Logging Functions ---
+
+function logStatus(message) {
+    const timestamp = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    console.log(`[${timestamp}] ${message}`);
+}
+
+function runCycle(currentCycle) {
+  if (operatingMode === 'music') {
+    resumeMusic();
+  } else {
+    restoreSystemVolume();
+  }
+  logStatus(`Starting ${WORK_MINUTES}-minute work interval ${currentCycle} of ${TOTAL_CYCLES}.`);
+
+  setTimeout(() => {
+    logStatus(`Starting ${BREAK_MINUTES}-minute break ${currentCycle} of ${TOTAL_CYCLES}.`);
+    if (operatingMode === 'music') {
+      pauseMusic();
+    } else {
+      muteSystem();
+    }
+  }, WORK_INTERVAL_MS);
+}
+
+// --- Main Program Logic ---
+
+async function main() {
+  console.log('--- Audio Focus Timer Initialized ---');
+
+  // Yargs handles positional arguments and flags separately.
+  // We check the first positional argument for the youtube URL.
+  const youtubeUrl = (argv._[0] && !String(argv._[0]).startsWith('--')) ? argv._[0] : null;
+  let playlistName = argv.playlist; // Yargs automatically handles aliased flags.
+
+  if (youtubeUrl) {
+    operatingMode = 'youtube';
+    playYouTubeVideo(youtubeUrl);
+    originalVolume = await getVolume();
+    logStatus(`Original volume detected: ${originalVolume}.`);
+  } else if (playlistName) {
+    operatingMode = 'music';
+    playPlaylist(playlistName);
+  } else {
+    operatingMode = 'system';
+    logStatus('Running in System Mute mode.');
+    originalVolume = await getVolume();
+    logStatus(`Original volume detected: ${originalVolume}.`);
+  }
+
+  for (let i = 0; i < TOTAL_CYCLES; i++) {
+      setTimeout(() => runCycle(i + 1), i * CYCLE_DURATION_MS);
+  }
+
+  const totalProgramDuration = TOTAL_CYCLES * CYCLE_DURATION_MS;
+  setTimeout(() => {
+      logStatus('All cycles complete. Finishing program. Great work!');
+      if (operatingMode === 'music') {
+        resumeMusic();
+      } else {
+        restoreSystemVolume();
+      }
+  }, totalProgramDuration);
+}
+
+main();
