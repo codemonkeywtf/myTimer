@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-// myTimer (v7)
+// myTimer (v8)
 // A flexible Pomodoro-style timer with command-line options.
+// Now stops Apple Music at the end of the session.
 
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
@@ -11,7 +12,7 @@ const execPromise = util.promisify(exec);
 
 // --- Command-Line Argument Parsing ---
 const argv = yargs(hideBin(process.argv))
-  .option('i', { // <--- This is the only line that changed
+  .option('i', {
     alias: 'interval',
     describe: 'Number of work/break intervals',
     type: 'number',
@@ -47,8 +48,6 @@ const CYCLE_DURATION_MS = WORK_INTERVAL_MS + BREAK_INTERVAL_MS;
 let originalVolume = 50;
 let operatingMode = 'system'; // 'system', 'music'
 
-// ... (The rest of the script is exactly the same as before) ...
-
 // --- System & App Control Functions ---
 
 function executeAppleScript(script) {
@@ -71,6 +70,11 @@ function pauseMusic() {
 function resumeMusic() {
   logStatus(`Resuming Apple Music. 🔊`);
   executeAppleScript(`tell application "Music" to play`);
+}
+
+function stopMusic() {
+  logStatus(`Stopping Apple Music playback.`);
+  executeAppleScript(`tell application "Music" to stop`);
 }
 
 function muteSystem() {
@@ -131,10 +135,8 @@ function runCycle(currentCycle) {
 async function main() {
   console.log('--- Audio Focus Timer Initialized ---');
 
-  // Yargs handles positional arguments and flags separately.
-  // We check the first positional argument for the youtube URL.
   const youtubeUrl = (argv._[0] && !String(argv._[0]).startsWith('--')) ? argv._[0] : null;
-  let playlistName = argv.playlist; // Yargs automatically handles aliased flags.
+  const playlistName = argv.playlist;
 
   if (youtubeUrl) {
     operatingMode = 'youtube';
@@ -158,10 +160,11 @@ async function main() {
   const totalProgramDuration = TOTAL_CYCLES * CYCLE_DURATION_MS;
   setTimeout(() => {
       logStatus('All cycles complete. Finishing program. Great work!');
+      // This is the updated final action block
       if (operatingMode === 'music') {
-        resumeMusic();
+        stopMusic(); // Stop music instead of leaving it playing
       } else {
-        restoreSystemVolume();
+        restoreSystemVolume(); // Leave system volume on
       }
   }, totalProgramDuration);
 }
